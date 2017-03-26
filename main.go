@@ -60,13 +60,13 @@ func handleClients(ln net.Listener, s Subscriber) {
 func main() {
 	var (
 		userClientsListenAddr = flag.String("user-clients-listen", ":9099", "User clients listen address")
-		eventSourceListenAddr = flag.String("eventsource-listen", ":9090", "Event source listen address")
+		eventSourceListenAddr = flag.String("event-source-listen", ":9090", "Event source listen address")
 		eventsCap             = flag.Int("events-capacity", 100000, "Capacity of an array with unordered events")
-		backpressure          = flag.Bool("clients-backpressure", false, "Enable client write backpressure")
+		noBackpressure        = flag.Bool("no-clients-backpressure", false, "Disable user clients' write backpressure")
 	)
 	flag.Parse()
 
-	userGraph := NewUserGraph(*backpressure)
+	userGraph := NewUserGraph(!*noBackpressure)
 
 	cl, err := net.Listen("tcp", *userClientsListenAddr)
 	if err != nil {
