@@ -137,8 +137,11 @@ func NewUserGraph(sendBackpressure bool) *UserGraph {
 	}
 }
 
-// Reset resets inverted connections graph
+// Reset resets inverted connections graph.
 func (g *UserGraph) Reset() {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+
 	g.invGraph = make(graph)
 }
 
@@ -159,9 +162,11 @@ func (g *UserGraph) Subscribe(userID int, c chan<- []byte) (UnsubscribeFunc, err
 	}
 	g.allConnected.add(c)
 
+	ig := g.invGraph
+
 	cleanup := func() {
 		g.connectedClients.removeMember(userID, c)
-		for id := range g.invGraph[userID] {
+		for id := range ig[userID] {
 			g.connectedFollowers.removeMember(id, c)
 		}
 		delete(g.allConnected, c)

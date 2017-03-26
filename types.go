@@ -22,7 +22,7 @@ type UnsubscribeFunc func()
 
 // Subscriber is the interface implemented by UserGraph that wraps the basic Subscribe method.
 //
-// Subscribe subscribes given channel c under identifier id and returns unsubscibe
+// Subscribe subscribes given channel c under identifier id and returns unsubscribe
 // function (that takes no arguments) and any error that prevented successful subscription.
 type Subscriber interface {
 	Subscribe(id int, c chan<- []byte) (UnsubscribeFunc, error)

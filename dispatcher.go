@@ -1,38 +1,67 @@
 package main
 
-// Dispatcher dispatchers events
+import (
+	"errors"
+)
+
+var (
+	// ErrSeqTooSmall is returned by Dispatch method of Dispatcher
+	// to indicate that event sequence number is too small.
+	ErrSeqTooSmall = errors.New("dispatcher: event.Seq too small")
+
+	// ErrSeqTooLarge is returned by Dispatch method of Dispatcher
+	// to indicate that event sequence number is too large.
+	ErrSeqTooLarge = errors.New("dispatcher: event.Seq too large")
+
+	// ErrSeqDuplicate is returned by Dispatch method of Dispatcher
+	// to indicate that there has been an event with the same sequence number before.
+	ErrSeqDuplicate = errors.New("dispatcher: event.Seq duplicate found")
+)
+
+// Dispatcher orders events and triggers their actions once they are in order.
 type Dispatcher struct {
-	startIndex int
-	i          int
-	actions    Actions
-	triggers   []ActionsTrigger
+	startIndex   int
+	currentIndex int
+	actions      Actions
+	triggers     []ActionsTrigger
 }
 
-func (d *Dispatcher) Dispatch(e Event) {
-	// TODO: handle seq > d.i + len(d.events)
-	if e.Seq-d.startIndex < d.i {
-		panic("seq too small")
+// Dispatch inserts event e into the right slot and triggers actions of the ordered slice.
+func (d *Dispatcher) Dispatch(e Event) error {
+	i := e.Seq - d.startIndex
+	if i < d.currentIndex {
+		return ErrSeqTooSmall
 	}
 	l := len(d.triggers)
-	d.triggers[(e.Seq-1)%l] = e
-	for i := 0; i < l; i++ {
-		t := d.triggers[d.i%l]
+	if i >= d.currentIndex+l {
+		return ErrSeqTooLarge
+	}
+
+	if d.triggers[i%l] != nil {
+		return ErrSeqDuplicate
+	}
+	d.triggers[i%l] = e
+	for {
+		t := d.triggers[d.currentIndex%l]
 		if t == nil {
 			break
 		}
 		t.Trigger(d.actions)
-		d.triggers[d.i%l] = nil
-		d.i++
+		d.triggers[d.currentIndex%l] = nil
+		d.currentIndex++
 	}
+	return nil
 }
 
+// Reset resets dispatcher's internal state.
 func (d *Dispatcher) Reset() {
 	for i := range d.triggers {
 		d.triggers[i] = nil
 	}
-	d.i = 0
+	d.currentIndex = 0
 }
 
+// NewDispatcher returns a new Dispatcher.
 func NewDispatcher(a Actions, startIndex, capacity int) *Dispatcher {
 	return &Dispatcher{
 		startIndex: startIndex,

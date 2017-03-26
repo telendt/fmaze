@@ -6,7 +6,7 @@ import (
 )
 
 func TestGraphSubscribeUnsubscribe(t *testing.T) {
-	g := NewUserGraph()
+	g := NewUserGraph(true)
 	c := make(chan []byte)
 	u, err := g.Subscribe(1, c)
 	if err != nil {
@@ -29,7 +29,7 @@ func TestGraphSubscribeUnsubscribe(t *testing.T) {
 }
 
 func TestGraphActions(t *testing.T) {
-	g := NewUserGraph()
+	g := NewUserGraph(true)
 
 	c1 := make(chan []byte, 1)
 	c2 := make(chan []byte, 1)

@@ -18,60 +18,57 @@ func handleClients(ln net.Listener, s Subscriber) {
 		}
 		go func() {
 			var userID int
-			_, err := fmt.Fscanln(conn, &userID)
-			if err != nil {
+			if _, err := fmt.Fscanln(conn, &userID); err != nil {
 				conn.Close()
+				return
 			}
 			c := make(chan []byte, 10) // TODO: parametrize
-			unsubscribe, err := s.Subscribe(userID, c)
-			done := make(chan struct{})
+			unsubscribe, _ := s.Subscribe(userID, c)
+			defer unsubscribe()
 			go func() {
 				_, _ = io.Copy(ioutil.Discard, conn)
-				close(done)
+				unsubscribe()
+				close(c)
 			}()
 			w := bufio.NewWriter(conn) // TODO: parametrize
-		outer:
-			for {
-				select {
-				case <-done:
-					break outer
-				case msg := <-c:
-					if _, err := w.Write(msg); err != nil {
-						break outer
-					}
-				inner:
-					for {
-						select {
-						case msg := <-c:
-							if _, err := w.Write(msg); err != nil {
-								break outer
-							}
-						default:
-							if err := w.Flush(); err != nil {
-								break outer
-							}
-							break inner
+			for msg := range c {
+				if _, err := w.Write(msg); err != nil {
+					return
+				}
+			loop:
+				for { // try to get more
+					select {
+					case msg, more := <-c:
+						if !more {
+							return
 						}
+						if _, err := w.Write(msg); err != nil {
+							return
+						}
+					default:
+						break loop
 					}
 				}
+				if err := w.Flush(); err != nil {
+					return
+				}
 			}
-			unsubscribe()
 		}()
 	}
 }
 
 func main() {
 	var (
-		clientListener = flag.String("clients-listener", ":9099", "User clients listener")
-		eventListener  = flag.String("event-listener", ":9090", "Event source listener")
-		eventsCap      = flag.Int("events-capacity", 100000, "Capacity of an array with unordered events")
-		backpressure   = flag.Bool("clients-backpresure", false, "Enable client write backpressure")
+		userClientsListenAddr = flag.String("user-clients-listen", ":9099", "User clients listen address")
+		eventSourceListenAddr = flag.String("eventsource-listen", ":9090", "Event source listen address")
+		eventsCap             = flag.Int("events-capacity", 100000, "Capacity of an array with unordered events")
+		backpressure          = flag.Bool("clients-backpressure", false, "Enable client write backpressure")
 	)
 	flag.Parse()
 
 	userGraph := NewUserGraph(*backpressure)
 
-	cl, err := net.Listen("tcp", *clientListener)
+	cl, err := net.Listen("tcp", *userClientsListenAddr)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -79,7 +76,7 @@ func main() {
 	go handleClients(cl, userGraph)
 
 	dispatcher := NewDispatcher(userGraph, 1, *eventsCap)
-	ln, err := net.Listen("tcp", *eventListener)
+	ln, err := net.Listen("tcp", *eventSourceListenAddr)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -101,7 +98,11 @@ func main() {
 				conn.Close()
 				break
 			}
-			dispatcher.Dispatch(event)
+			if err := dispatcher.Dispatch(event); err != nil {
+				log.Printf("%s: %q\n", err.Error(), line)
+				conn.Close()
+				break
+			}
 		}
 		dispatcher.Reset()
 		userGraph.Reset()
