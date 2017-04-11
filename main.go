@@ -8,75 +8,56 @@ import (
 	"io/ioutil"
 	"log"
 	"net"
+	"time"
 )
-
-func handleClients(ln net.Listener, s Subscriber) {
-	for {
-		conn, err := ln.Accept()
-		if err != nil {
-			log.Fatal(err)
-		}
-		go func() {
-			var userID int
-			if _, err := fmt.Fscanln(conn, &userID); err != nil {
-				conn.Close()
-				return
-			}
-			c := make(chan []byte, 10) // TODO: parametrize
-			unsubscribe, _ := s.Subscribe(userID, c)
-			defer unsubscribe()
-			go func() {
-				_, _ = io.Copy(ioutil.Discard, conn)
-				unsubscribe()
-				close(c)
-			}()
-			w := bufio.NewWriter(conn) // TODO: parametrize
-			for msg := range c {
-				if _, err := w.Write(msg); err != nil {
-					return
-				}
-			loop:
-				for { // try to get more
-					select {
-					case msg, more := <-c:
-						if !more {
-							return
-						}
-						if _, err := w.Write(msg); err != nil {
-							return
-						}
-					default:
-						break loop
-					}
-				}
-				if err := w.Flush(); err != nil {
-					return
-				}
-			}
-		}()
-	}
-}
 
 func main() {
 	var (
-		userClientsListenAddr = flag.String("user-clients-listen", ":9099", "User clients listen address")
-		eventSourceListenAddr = flag.String("event-source-listen", ":9090", "Event source listen address")
-		eventsCap             = flag.Int("events-capacity", 100000, "Capacity of an array with unordered events")
-		noBackpressure        = flag.Bool("no-clients-backpressure", false, "Disable user clients' write backpressure")
+		clientsListenAddr = flag.String("clients-listen", ":9099", "User clients listen address")
+		sourceListenAddr  = flag.String("event-source-listen", ":9090", "Event source listen address")
+		eventsCap         = flag.Int("events-capacity", 100000, "Capacity of unordered events store")
+		noBackpressure    = flag.Bool("no-backpressure", false, "Disable client write backpressure")
+		writeBufSize      = flag.Int("write-buffer", 4096, "Write buffer size in bytes")
+		useWritev         = flag.Bool("use-writev", false, "Try to use writev instead of write syscall")
+		msgBacklog        = flag.Int("msg-backlog", 10, "Client message backlog")
+		flushInterval     = flag.Duration("flush-interval", 10*time.Second, "Write flush interval")
 	)
 	flag.Parse()
 
 	userGraph := NewUserGraph(!*noBackpressure)
 
-	cl, err := net.Listen("tcp", *userClientsListenAddr)
+	cl, err := net.Listen("tcp", *clientsListenAddr)
 	if err != nil {
 		log.Fatal(err)
 	}
-
-	go handleClients(cl, userGraph)
+	go func() {
+		forwarder := NewMaxLatencyForwarder(*writeBufSize, *flushInterval, *useWritev)
+		for {
+			conn, err := cl.Accept()
+			if err != nil {
+				log.Fatal(err)
+			}
+			go func() {
+				var userID int
+				if _, err := fmt.Fscanln(conn, &userID); err != nil {
+					return
+				}
+				c := make(chan []byte, *msgBacklog)
+				unsubscribe, done, _ := userGraph.Subscribe(userID, c)
+				defer unsubscribe()
+				go func() {
+					_, _ = io.Copy(ioutil.Discard, conn)
+					unsubscribe()
+					close(c)
+				}()
+				forwarder.Forward(done, conn, c)
+				conn.Close()
+			}()
+		}
+	}()
 
 	dispatcher := NewDispatcher(userGraph, 1, *eventsCap)
-	ln, err := net.Listen("tcp", *eventSourceListenAddr)
+	ln, err := net.Listen("tcp", *sourceListenAddr)
 	if err != nil {
 		log.Fatal(err)
 	}

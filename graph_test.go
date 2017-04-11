@@ -8,14 +8,14 @@ import (
 func TestGraphSubscribeUnsubscribe(t *testing.T) {
 	g := NewUserGraph(true)
 	c := make(chan []byte)
-	u, err := g.Subscribe(1, c)
+	u, _, err := g.Subscribe(1, c)
 	if err != nil {
 		t.Errorf("First subscribe returned error %s", err.Error())
 	}
 	if len(g.allConnected) != 1 {
 		t.Error("Subscribe should add connection to allConnected")
 	}
-	if _, err := g.Subscribe(2, c); err != ErrChannelAlreadySubscribed {
+	if _, _, err := g.Subscribe(2, c); err != ErrChannelAlreadySubscribed {
 		t.Error("Second subscribe didn't return ErrChannelAlreadySubscribed error")
 	}
 	if len(g.allConnected) != 1 {

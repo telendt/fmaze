@@ -86,6 +86,9 @@ func (g graph) disconnect(v1, v2 int) {
 type UserGraph struct {
 	mu sync.RWMutex
 
+	// closed on reset
+	done chan struct{}
+
 	sendToAll func([]byte, cSet)
 
 	connectedClients   cSetsMap
@@ -96,8 +99,8 @@ type UserGraph struct {
 	invGraph graph
 }
 
-// NewUserGraph returns new UserGraph
-func NewUserGraph(sendBackpressure bool) *UserGraph {
+// NewUserGraph returns new UserGraph.
+func NewUserGraph(blockingSend bool) *UserGraph {
 	f := func(msg []byte, s cSet) {
 		for c := range s {
 			select {
@@ -106,7 +109,7 @@ func NewUserGraph(sendBackpressure bool) *UserGraph {
 			}
 		}
 	}
-	if sendBackpressure {
+	if blockingSend {
 		f = func(msg []byte, s cSet) {
 			switch l := len(s); {
 			case l == 1:
@@ -129,6 +132,7 @@ func NewUserGraph(sendBackpressure bool) *UserGraph {
 	}
 
 	return &UserGraph{
+		done:               make(chan struct{}),
 		sendToAll:          f,
 		connectedClients:   make(cSetsMap),
 		connectedFollowers: make(cSetsMap),
@@ -141,7 +145,8 @@ func NewUserGraph(sendBackpressure bool) *UserGraph {
 func (g *UserGraph) Reset() {
 	g.mu.Lock()
 	defer g.mu.Unlock()
-
+	close(g.done)
+	g.done = make(chan struct{})
 	g.invGraph = make(graph)
 }
 
@@ -149,12 +154,12 @@ func (g *UserGraph) Reset() {
 // It also returns ErrChannelAlreadySubscribed if the channel has already been subsribed to any userID.
 // Given channel can only subscribe to a single userID, but it's fine to subscribe
 // multiple different channels under the same userID.
-func (g *UserGraph) Subscribe(userID int, c chan<- []byte) (UnsubscribeFunc, error) {
+func (g *UserGraph) Subscribe(userID int, c chan<- []byte) (UnsubscribeFunc, <-chan struct{}, error) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 
 	if _, ok := g.allConnected[c]; ok {
-		return nil, ErrChannelAlreadySubscribed
+		return nil, g.done, ErrChannelAlreadySubscribed
 	}
 	g.connectedClients.getOrCreate(userID).add(c)
 	for id := range g.invGraph[userID] {
@@ -180,7 +185,7 @@ func (g *UserGraph) Subscribe(userID int, c chan<- []byte) (UnsubscribeFunc, err
 			cleanup()
 			cleanup = nil
 		}
-	}, nil
+	}, g.done, nil
 }
 
 // Follow adds followerID to list of followers of user identified by followedID.
