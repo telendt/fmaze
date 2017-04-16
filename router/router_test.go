@@ -1,12 +1,12 @@
-package main
+package router
 
 import (
 	"reflect"
 	"testing"
 )
 
-func TestGraphSubscribeUnsubscribe(t *testing.T) {
-	g := NewUserGraph(true)
+func TestRouterSubscribeUnsubscribe(t *testing.T) {
+	g := New(true)
 	c := make(chan []byte)
 	u, _, err := g.Subscribe(1, c)
 	if err != nil {
@@ -28,8 +28,8 @@ func TestGraphSubscribeUnsubscribe(t *testing.T) {
 	u() // should be a NOOP at this point
 }
 
-func TestGraphActions(t *testing.T) {
-	g := NewUserGraph(true)
+func TestRouterActions(t *testing.T) {
+	g := New(true)
 
 	c1 := make(chan []byte, 1)
 	c2 := make(chan []byte, 1)

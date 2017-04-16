@@ -1,4 +1,4 @@
-package main
+package event
 
 import (
 	"errors"
@@ -7,21 +7,21 @@ import (
 var (
 	// ErrSeqTooSmall is returned by Dispatch method of Dispatcher
 	// to indicate that event sequence number is too small.
-	ErrSeqTooSmall = errors.New("dispatcher: event.Seq too small")
+	ErrSeqTooSmall = errors.New("orderer: event.Seq too small")
 
 	// ErrSeqTooLarge is returned by Dispatch method of Dispatcher
 	// to indicate that event sequence number is too large.
-	ErrSeqTooLarge = errors.New("dispatcher: event.Seq too large")
+	ErrSeqTooLarge = errors.New("orderer: event.Seq too large")
 
 	// ErrSeqDuplicate is returned by Dispatch method of Dispatcher
 	// to indicate that there has been an event with the same sequence number before.
-	ErrSeqDuplicate = errors.New("dispatcher: event.Seq duplicate found")
+	ErrSeqDuplicate = errors.New("orderer: event.Seq duplicate found")
 )
 
 // Dispatcher orders events and triggers their actions once they are in order.
 type Dispatcher struct {
-	startIndex   int
-	currentIndex int
+	startIndex   int64
+	currentIndex int64
 	actions      Actions
 	triggers     []ActionsTrigger
 }
@@ -32,7 +32,7 @@ func (d *Dispatcher) Dispatch(e Event) error {
 	if i < d.currentIndex {
 		return ErrSeqTooSmall
 	}
-	l := len(d.triggers)
+	l := int64(len(d.triggers))
 	if i >= d.currentIndex+l {
 		return ErrSeqTooLarge
 	}
@@ -62,7 +62,7 @@ func (d *Dispatcher) Reset() {
 }
 
 // NewDispatcher returns a new Dispatcher.
-func NewDispatcher(a Actions, startIndex, capacity int) *Dispatcher {
+func NewDispatcher(a Actions, startIndex int64, capacity int) *Dispatcher {
 	return &Dispatcher{
 		startIndex: startIndex,
 		actions:    a,

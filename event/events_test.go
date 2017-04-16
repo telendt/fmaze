@@ -1,4 +1,4 @@
-package main
+package event
 
 import (
 	"fmt"
@@ -64,7 +64,7 @@ func fmtCalls(actionCalls []actionCall) string {
 func TestParseEventsSuccess(t *testing.T) {
 	for _, testCase := range []struct {
 		payloadStr string
-		seq        int
+		seq        int64
 		calls      []actionCall
 	}{
 		{"666|F|60|50\n", 666, []actionCall{
@@ -84,7 +84,7 @@ func TestParseEventsSuccess(t *testing.T) {
 			sendMsgToFollowersCall(32, []byte("634|S|32\n")),
 		}},
 	} {
-		event, err := ParseEvent([]byte(testCase.payloadStr))
+		event, err := Parse([]byte(testCase.payloadStr))
 		if err != nil {
 			t.Errorf("%s: %s", testCase.payloadStr, err.Error())
 			continue
@@ -99,5 +99,4 @@ func TestParseEventsSuccess(t *testing.T) {
 			t.Errorf("%s: calls %s != %s", testCase.payloadStr, fmtCalls(spy.callStack), fmtCalls(testCase.calls))
 		}
 	}
-
 }

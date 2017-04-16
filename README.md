@@ -10,6 +10,8 @@ its candidates.
 
     $ ./fmaze -h
     Usage of ./fmaze:
+      -auth-timeout duration
+            Client authentication timeout (default 1s)
       -clients-listen string
             User clients listen address (default ":9099")
       -event-source-listen string
@@ -22,6 +24,12 @@ its candidates.
             Client message backlog (default 10)
       -no-backpressure
             Disable client write backpressure
+      -no-reset
+            Don't reset internal state when event source disconnects
+      -read-buffer int
+            Read buffer size in bytes (default 4096)
+      -start-sequence int
+            Sequence start number (default 1)
       -use-writev
             Try to use writev instead of write syscall
       -write-buffer int

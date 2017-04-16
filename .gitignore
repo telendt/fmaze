@@ -1,1 +1,7 @@
-fmaze
+# binaries
+/fmaze
+/fmaze-race
+
+# coverprofile
+/coverage.txt
+/profile.out

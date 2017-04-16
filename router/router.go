@@ -1,13 +1,20 @@
-package main
+package router
 
 import (
 	"errors"
 	"sync"
+
+	"github.com/telendt/fmaze/event"
 )
 
-// ErrChannelAlreadySubscribed is returned by UserGraph.Subscribe calls
-// when client's send channel has been already subscribed.
-var ErrChannelAlreadySubscribed = errors.New("client already subscribed")
+var (
+	// ErrChannelAlreadySubscribed is returned by Router.Subscribe calls
+	// when client's send channel has been already subscribed.
+	ErrChannelAlreadySubscribed = errors.New("client already subscribed")
+
+	rt *Router
+	_  event.Actions = rt
+)
 
 // cSet represents set of send channels and provides some utility methods.
 type cSet map[chan<- []byte]struct{}
@@ -61,29 +68,8 @@ func (m cSetsMap) removeMembers(userID int, cset cSet) {
 	}
 }
 
-// graph as "adjacency list" with O(1) amortized access/add/delete time
-type graph map[int]map[int]struct{}
-
-func (g graph) connect(v1, v2 int) {
-	vertices, ok := g[v1]
-	if !ok {
-		vertices = make(map[int]struct{})
-		g[v1] = vertices
-	}
-	vertices[v2] = struct{}{}
-}
-
-func (g graph) disconnect(v1, v2 int) {
-	if vertices, ok := g[v1]; ok {
-		delete(vertices, v2)
-		if len(vertices) == 0 {
-			delete(g, v1)
-		}
-	}
-}
-
-// UserGraph implements Actions interface.
-type UserGraph struct {
+// Router implements Actions interface.
+type Router struct {
 	mu sync.RWMutex
 
 	// closed on reset
@@ -96,11 +82,11 @@ type UserGraph struct {
 	allConnected       cSet
 
 	// inverted connection graph
-	invGraph graph
+	invGraph Graph
 }
 
-// NewUserGraph returns new UserGraph.
-func NewUserGraph(blockingSend bool) *UserGraph {
+// New returns new Router.
+func New(blockingSend bool) *Router {
 	f := func(msg []byte, s cSet) {
 		for c := range s {
 			select {
@@ -131,30 +117,30 @@ func NewUserGraph(blockingSend bool) *UserGraph {
 		}
 	}
 
-	return &UserGraph{
+	return &Router{
 		done:               make(chan struct{}),
 		sendToAll:          f,
 		connectedClients:   make(cSetsMap),
 		connectedFollowers: make(cSetsMap),
 		allConnected:       make(cSet),
-		invGraph:           make(graph),
+		invGraph:           make(sparseGraph),
 	}
 }
 
 // Reset resets inverted connections graph.
-func (g *UserGraph) Reset() {
+func (g *Router) Reset() {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	close(g.done)
 	g.done = make(chan struct{})
-	g.invGraph = make(graph)
+	g.invGraph = make(sparseGraph)
 }
 
-// Subscribe adds user client (its send channel) to user graph and returns UnsubscribeFunc.
+// Subscribe adds user client (its send channel) to Router and returns UnsubscribeFunc.
 // It also returns ErrChannelAlreadySubscribed if the channel has already been subsribed to any userID.
 // Given channel can only subscribe to a single userID, but it's fine to subscribe
 // multiple different channels under the same userID.
-func (g *UserGraph) Subscribe(userID int, c chan<- []byte) (UnsubscribeFunc, <-chan struct{}, error) {
+func (g *Router) Subscribe(userID int, c chan<- []byte) (UnsubscribeFunc, <-chan struct{}, error) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 
@@ -162,7 +148,7 @@ func (g *UserGraph) Subscribe(userID int, c chan<- []byte) (UnsubscribeFunc, <-c
 		return nil, g.done, ErrChannelAlreadySubscribed
 	}
 	g.connectedClients.getOrCreate(userID).add(c)
-	for id := range g.invGraph[userID] {
+	for id := range g.invGraph.Neighbors(userID) {
 		g.connectedFollowers.getOrCreate(id).add(c)
 	}
 	g.allConnected.add(c)
@@ -171,7 +157,7 @@ func (g *UserGraph) Subscribe(userID int, c chan<- []byte) (UnsubscribeFunc, <-c
 
 	cleanup := func() {
 		g.connectedClients.removeMember(userID, c)
-		for id := range ig[userID] {
+		for id := range ig.Neighbors(userID) {
 			g.connectedFollowers.removeMember(id, c)
 		}
 		delete(g.allConnected, c)
@@ -189,29 +175,29 @@ func (g *UserGraph) Subscribe(userID int, c chan<- []byte) (UnsubscribeFunc, <-c
 }
 
 // Follow adds followerID to list of followers of user identified by followedID.
-func (g *UserGraph) Follow(followerID, followedID int) {
+func (g *Router) Follow(followerID, followedID int) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 
-	g.invGraph.connect(followerID, followedID)
+	g.invGraph.Connect(followerID, followedID)
 	if conns, ok := g.connectedClients[followerID]; ok {
 		g.connectedFollowers.getOrCreate(followedID).extend(conns)
 	}
 }
 
 // Unfollow removes followerID from list of followers of user identified by followedID.
-func (g *UserGraph) Unfollow(followerID, followedID int) {
+func (g *Router) Unfollow(followerID, followedID int) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 
-	g.invGraph.disconnect(followerID, followedID)
+	g.invGraph.Disconnect(followerID, followedID)
 	if conns, ok := g.connectedClients[followerID]; ok {
 		g.connectedFollowers.removeMembers(followedID, conns)
 	}
 }
 
 // SendMsg sends message msg to connected clients registered with userID identifier.
-func (g *UserGraph) SendMsg(userID int, msg []byte) {
+func (g *Router) SendMsg(userID int, msg []byte) {
 	g.mu.RLock()
 	defer g.mu.RUnlock()
 
@@ -221,7 +207,7 @@ func (g *UserGraph) SendMsg(userID int, msg []byte) {
 }
 
 // SendMsgToFollowers sends message msg to connected followers of user identified by userID.
-func (g *UserGraph) SendMsgToFollowers(userID int, msg []byte) {
+func (g *Router) SendMsgToFollowers(userID int, msg []byte) {
 	g.mu.RLock()
 	defer g.mu.RUnlock()
 
@@ -231,7 +217,7 @@ func (g *UserGraph) SendMsgToFollowers(userID int, msg []byte) {
 }
 
 // Broadcast sends message msg to all connected users.
-func (g *UserGraph) Broadcast(msg []byte) {
+func (g *Router) Broadcast(msg []byte) {
 	g.mu.RLock()
 	defer g.mu.RUnlock()
 
